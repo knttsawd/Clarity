@@ -1,3 +1,7 @@
+#Window testing configs
+from kivy.config import Config
+Config.set('graphics', 'width', '320')
+Config.set('graphics', 'height', '580')
 #Imported to run the camera
 import cv2
 #Imported to recognize the voice prompts of blind people
