@@ -8,6 +8,7 @@ import threading
 import pyttsx3
 
 #Kivy App frontend components
+from kivy.lang import Builder
 from kivy.app import App;
 from kivy.uix.label import Label
 from kivy.uix.gridlayout import GridLayout
@@ -47,11 +48,17 @@ class MainApp(App):
         return sm
     def on_request_close(self, **kwargs):
         App.get_running_app().stop()
+        
 class CameraScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs) #Makes sure we don't override kivy's code 
-        camera = Camera(play=True)
-        self.add_widget(camera)
+        camera_layout = GridLayout(cols=1)
+        camera = Camera(play=True, resolution=(640,480))
+        back_button = Button(text="Back")
+        back_button.bind(on_press = lambda instance: changeScreen('main'))
+        camera_layout.add_widget(camera)
+        camera_layout.add_widget(back_button)
+        self.add_widget(camera_layout)
 
 
 class ChatScreen(Screen):
@@ -73,7 +80,6 @@ class ChatScreen(Screen):
         self.add_widget(home_page)
 
 if __name__ == "__main__":
-    
     voice_thread = threading.Thread(target=listen_for_voice, args=(), daemon=True)
     voice_thread.start()
     MainApp().run()
