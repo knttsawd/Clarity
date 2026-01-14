@@ -20,8 +20,37 @@ from kivy.uix.button import Button
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.core.window import Window
 from kivy.uix.camera import Camera
+from kivymd.app import MDApp
+from kivymd.uix.card import MDCard
+from kivymd.uix.label import MDLabel
+from kivy.uix.boxlayout import BoxLayout
+from kivy.graphics import Color, Rectangle
+from kivymd.uix.button import MDRaisedButton
+from kivy.uix.widget import Widget
 
-class MainApp(App):
+
+
+class RoundedButton(MDRaisedButton):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        self.size_hint_x=1
+        self.size_hint_y=1
+
+        self.md_bg_color = (0.4, 0.6, 1, 1)
+        self.text_color = (1, 1, 1, 1)
+
+        self.radius = [40, 40, 40, 40]
+
+        self.font_style = "Button"
+        self.font_size = 30
+
+        self.padding = [10, 10]
+
+       
+
+
+class MainApp(MDApp):
     def build(self):
         home_page = ChatScreen(name = 'main')
         obstacle_detection = CameraScreen(name='obstacle_detection')
@@ -38,8 +67,27 @@ class BackButton(Button):
         super().__init__(**kwargs)
         self.text = "Back"
         self.bind(on_press = lambda instance: changeScreen('main'))
+        self.background_normal=""
+        self.background_color=(0.4, 0.6, 1, 1)
+        self.font_size=35
+        self.font_style="Button"
 
-class CameraScreen(Screen):
+class BaseScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        with self.canvas.before:
+            Color(0.05, 0.1, 0.2, 1)
+            self.bg_rect = Rectangle(pos=self.pos, size=self.size)
+        
+        self.bind(pos=self.update_bg, size=self.update_bg)
+        
+    def update_bg(self, *args):
+        self.bg_rect.pos=self.pos
+        self.bg_rect.size=self.size
+
+
+class CameraScreen(BaseScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs) #Makes sure we don't override kivy's code 
         camera_layout = GridLayout(cols=1)
@@ -49,22 +97,47 @@ class CameraScreen(Screen):
         camera_layout.add_widget(back_button)
         self.add_widget(camera_layout)
 
-class ChatScreen(Screen):
+class ChatScreen(BaseScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
         home_page = Screen(name = self.name)
         chat = GridLayout(cols=1)
-        chat.add_widget(Label(text="Welcome to Clarity! How can we help you?"))
+
+        chat.add_widget(Widget(size_hint_y=None, height=30))
+        # chat.add_widget(Label(text="Welcome to Clarity! How can we help you?"))
+        chat.add_widget(
+            MDCard(
+                orientation="vertical",
+                padding=15,
+                size_hint_y=None,
+                pos_hint={"right": 1},
+                height=100,
+                radius=[20, 20, 20, 20],
+                md_bg_color=(0.3, 0.5, 1, 1),
+                elevation=5
+            )
+        )
+        chat.children[0].add_widget(
+            MDLabel(
+                text="Welcome to Clarity! How can we help you?",
+                halign="left",
+                font_style="H6",
+                theme_text_color="Custom",
+                text_color=(1, 1, 1, 1)
+            )
+        )
         chat.add_widget(Label())
-        obstacle_button = Button(text="Obstacle Detection")
+        obstacle_button = RoundedButton(text="Obstacle Detection")
         obstacle_button.bind(on_press = lambda instance: changeScreen('obstacle_detection'))
         chat.add_widget(obstacle_button)
-        translate_button = Button(text="Transcription")
+        translate_button = RoundedButton(text="Transcription")
         translate_button.bind(on_press = lambda instance:changeScreen('transcript'))
         chat.add_widget(translate_button)
         self.add_widget(chat)
 
-class TranscriptScreen(Screen):
+
+class TranscriptScreen(BaseScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         layout = GridLayout(cols=1)
