@@ -10,6 +10,12 @@ import speech_recognition as sr
 import threading
 #Making python speak
 import pyttsx3
+#offline quick speech recognition
+import vosk
+#Checks for paths
+import os
+#Images to arrays so we don't need to save peoples photos
+import numpy as np
 
 #Kivy App frontend components
 from kivy.lang import Builder
@@ -20,7 +26,10 @@ from kivy.uix.button import Button
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.core.window import Window
 from kivy.uix.camera import Camera
+from kivy.clock import mainthread, Clock
+from kivy.graphics.texture import Texture
 
+path = "../venv/Lib/site-packages/speech_recognition/vosk"
 class MainApp(App):
     def build(self):
         home_page = ChatScreen(name = 'main')
@@ -67,20 +76,28 @@ class ChatScreen(Screen):
 class TranscriptScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.sub_layout = TextList(cols=1)
         layout = GridLayout(cols=1)
-        sub_layout = GridLayout(cols=1)
-        layout.add_widget(sub_layout)
+        layout.add_widget(self.sub_layout)
         layout.add_widget(BackButton())
         self.add_widget(layout)
+    
+class TextList(GridLayout):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    @mainthread
     def add_message(self, message):
         text = Label(text=message)
-        self.sub_layout.add_widget(text)
+        self.add_widget(text)
         print(text)
         print("Init")
         return True
 
+
 sm = ScreenManager()
 r = sr.Recognizer()
+r.vosk_model_path = path
 messages = []
 transcript = TranscriptScreen(name='transcript')
 
@@ -91,14 +108,15 @@ def listen_for_voice():
         while True:
             try:
                 audio = r.listen(mic, 10)
-                text = r.recognize_sphinx(audio)
+                text = r.recognize_vosk(audio)
                 text = text.lower() #to ensure nothing interesting happens when comparing text
+                transcript.sub_layout.add_message(text)
                 print(text)
-                transcript.add_message(text)
             except sr.WaitTimeoutError:
                 print("Nothing has been said for a while. Would you like to stop?")
-            except:
+            except Exception as e:
                 print("Could not understand voice")
+                print(e)
                 pass
 #camera = cv2.VideoCapture(0) #0 means to use the default camera
 
