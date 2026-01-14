@@ -16,6 +16,10 @@ import vosk
 import os
 #Images to arrays so we don't need to save peoples photos
 import numpy as np
+#Python Image Processing
+from PIL import Image as PILImg
+#You Only Look Once, Fast Accurate Object Detection
+from ultralytics import YOLO
 
 #Kivy App frontend components
 from kivy.lang import Builder
@@ -30,10 +34,13 @@ from kivy.clock import mainthread, Clock
 from kivy.graphics.texture import Texture
 
 path = "../venv/Lib/site-packages/speech_recognition/vosk"
+sm = ScreenManager()
+r = sr.Recognizer()
+r.vosk_model_path = path
+model = YOLO("yolov8n.pt")
 class MainApp(App):
     def build(self):
         home_page = ChatScreen(name = 'main')
-        obstacle_detection = CameraScreen(name='obstacle_detection')
         sm.add_widget(obstacle_detection)
         sm.add_widget(home_page)
         sm.add_widget(transcript)
@@ -46,17 +53,29 @@ class BackButton(Button):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.text = "Back"
-        self.bind(on_press = lambda instance: changeScreen('main'))
+        self.bind(on_press = lambda instance: change_screen('main'))
 
 class CameraScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs) #Makes sure we don't override kivy's code 
         camera_layout = GridLayout(cols=1)
-        camera = Camera(play=True, resolution=(640,480))
-        camera_layout.add_widget(camera)
+        self.camera = Camera(play=True, resolution=(640,480))
+        camera_layout.add_widget(self.camera)
+        analyze_button = Button(text="Describe_Image")
+        analyze_button.bind(on_press = lambda instance: analyze_image())
+        camera_layout.add_widget(analyze_button)
         back_button = BackButton()
         camera_layout.add_widget(back_button)
         self.add_widget(camera_layout)
+    def get_img_data(self, **kwargs):
+        texture = self.camera.texture
+        if texture:
+            raw_rgba_img = PILImg.frombytes("RGBA", size=texture.size, data=texture.pixels) 
+            frame = np.array(raw_rgba_img)
+            raw_bgra_frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)#BGRA stands for Blue, Green, Red, Alpha. It's like RGB, but more compatible with opencv(image processing)
+            return raw_bgra_frame
+        else:
+            return
 
 class ChatScreen(Screen):
     def __init__(self, **kwargs):
@@ -66,10 +85,10 @@ class ChatScreen(Screen):
         chat.add_widget(Label(text="Welcome to Clarity! How can we help you?"))
         chat.add_widget(Label())
         obstacle_button = Button(text="Obstacle Detection")
-        obstacle_button.bind(on_press = lambda instance: changeScreen('obstacle_detection'))
+        obstacle_button.bind(on_press = lambda instance: change_screen('obstacle_detection'))
         chat.add_widget(obstacle_button)
         translate_button = Button(text="Transcription")
-        translate_button.bind(on_press = lambda instance:changeScreen('transcript'))
+        translate_button.bind(on_press = lambda instance:change_screen('transcript'))
         chat.add_widget(translate_button)
         self.add_widget(chat)
 
@@ -90,16 +109,10 @@ class TextList(GridLayout):
     def add_message(self, message):
         text = Label(text=message)
         self.add_widget(text)
-        print(text)
-        print("Init")
         return True
 
-
-sm = ScreenManager()
-r = sr.Recognizer()
-r.vosk_model_path = path
-messages = []
 transcript = TranscriptScreen(name='transcript')
+obstacle_detection = CameraScreen(name='obstacle_detection')
 
 def listen_for_voice():
     with sr.Microphone() as mic:
@@ -111,16 +124,26 @@ def listen_for_voice():
                 text = r.recognize_vosk(audio)
                 text = text.lower() #to ensure nothing interesting happens when comparing text
                 transcript.sub_layout.add_message(text)
-                print(text)
             except sr.WaitTimeoutError:
                 print("Nothing has been said for a while. Would you like to stop?")
             except Exception as e:
                 print("Could not understand voice")
                 print(e)
                 pass
-#camera = cv2.VideoCapture(0) #0 means to use the default camera
 
-def changeScreen(name):
+#camera = cv2.VideoCapture(0) #0 means to use the default camera
+def analyze_image():
+    img_data = obstacle_detection.get_img_data()
+    success, encoded_img = cv2.imencode('.jpg', img_data)
+    decoded_img = cv2.imdecode(encoded_img, cv2.IMREAD_COLOR)
+    results = model(decoded_img)
+    for result in results:
+        for box in result.boxes:
+            print("CLS: ", result.names[int(box.cls)])
+        print("LEN: ", len(result.boxes))
+
+
+def change_screen(name):
      sm.current = name
 
 if __name__ == "__main__":
