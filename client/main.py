@@ -38,6 +38,10 @@ sm = ScreenManager()
 r = sr.Recognizer()
 r.vosk_model_path = path
 model = YOLO("yolov8n.pt")
+left_right_object_sort = []
+up_down_object_sort = []
+class_ids_horizontal = []
+class_ids_vertical = []
 class MainApp(App):
     def build(self):
         home_page = ChatScreen(name = 'main')
@@ -137,10 +141,27 @@ def analyze_image():
     success, encoded_img = cv2.imencode('.jpg', img_data)
     decoded_img = cv2.imdecode(encoded_img, cv2.IMREAD_COLOR)
     results = model(decoded_img)
+    left_right_object_sort = []
+    up_down_object_sort = []
+    class_ids_horizontal = []
+    class_ids_vertical = []
     for result in results:
+        xy_box_coordinates = result.boxes.xyxy.cpu().numpy()
+        xywh_box_coordinates = result.boxes.xyxy.cpu().numpy()
+        j = 0
+        for coordinates in xy_box_coordinates:
+            left_right_object_sort.append(int(coordinates[0]))
+            up_down_object_sort.append(int(xywh_box_coordinates[j][3]) + int(coordinates[1]))
+            j += 1
+        i = 0
         for box in result.boxes:
-            print("CLS: ", result.names[int(box.cls)])
-        print("LEN: ", len(result.boxes))
+            item_dict_h = {'min_x': left_right_object_sort[i], 'name': model.names[int(box.cls[0])]}
+            item_dict_v = {'distance': up_down_object_sort[i], 'name': model.names[int(box.cls[0])]}
+            class_ids_horizontal.append(item_dict_h)
+            class_ids_vertical.append(item_dict_v)
+            i += 1
+        class_ids_horizontal = sorted(class_ids_horizontal, key = lambda item: item['min_x']) #Consider *-1 for mirrored cameras
+        class_ids_vertical = sorted(class_ids_vertical, key = lambda item: item['distance'] * -1)
 
 
 def change_screen(name):
