@@ -2,16 +2,16 @@
 from kivy.config import Config
 Config.set('graphics', 'width', '320')
 Config.set('graphics', 'height', '580')
+import time
 #Imported to run the camera
 import cv2
-#Imported to recognize the voice prompts of blind people
-import speech_recognition as sr
 #Imported to run multiple scripts at once
 import threading
 #Making python speak
 import pyttsx3
-#offline quick speech recognition
-import vosk
+#Recording audio for transcription
+import pyaudio
+import wave
 #Checks for paths
 import os
 #Images to arrays so we don't need to save peoples photos
@@ -20,6 +20,8 @@ import numpy as np
 from PIL import Image as PILImg
 #You Only Look Once, Fast Accurate Object Detection
 from ultralytics import YOLO
+#offline voice recognition
+from faster_whisper import WhisperModel
 
 #Kivy App frontend components
 from kivy.lang import Builder
@@ -32,16 +34,38 @@ from kivy.core.window import Window
 from kivy.uix.camera import Camera
 from kivy.clock import mainthread, Clock
 from kivy.graphics.texture import Texture
+from kivy.uix.scrollview import ScrollView
 
-path = "../venv/Lib/site-packages/speech_recognition/vosk"
+CHUNK = 1024
+FORMAT = pyaudio.paInt16 # 16-bit audio
+CHANNELS = 1             # Mono
+RATE = 44100             # Sample rate (common standard)
+RECORD_SECONDS = 5       # Duration of recording
+WAVE_OUTPUT_FILENAME = "output.wav"
+
 sm = ScreenManager()
-r = sr.Recognizer()
-r.vosk_model_path = path
-model = YOLO("yolov8n.pt")
+p = pyaudio.PyAudio()
+speech_model_path = "./ggml-tiny.en.bin"
+try:
+    speech_model = WhisperModel("small.en", device="cpu", compute_type="int8")
+    stream = None
+except Exception as e:
+    print(e)
+obj_model = YOLO("yolov8n.pt")
 left_right_object_sort = []
 up_down_object_sort = []
 class_ids_horizontal = []
 class_ids_vertical = []
+transcribing = False
+tts_engine = pyttsx3.init()
+
+def open_stream():
+    global transcribing
+    transcribing = True
+
+def close_stream():
+    global transcribing
+    transcribing = False
 class MainApp(App):
     def build(self):
         home_page = ChatScreen(name = 'main')
@@ -52,6 +76,10 @@ class MainApp(App):
         return sm
     def on_request_close(self, **kwargs):
         App.get_running_app().stop()
+        print("Closing")
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
         
 class BackButton(Button):
     def __init__(self, **kwargs):
@@ -99,9 +127,17 @@ class ChatScreen(Screen):
 class TranscriptScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.sub_layout = TextList(cols=1)
+        self.sub_layout = TextList(cols=1, size_hint_y=None)
+        open_stream_button = Button(text="Transcribe")
+        open_stream_button.bind(on_press=lambda instance: open_stream())
+        close_stream_button = Button(text="Stop transcribing")
+        close_stream_button.bind(on_press=lambda instance: close_stream())
         layout = GridLayout(cols=1)
-        layout.add_widget(self.sub_layout)
+        scroll_view = ScrollView(size_hint=(1,1))
+        scroll_view.add_widget(self.sub_layout)
+        layout.add_widget(scroll_view)
+        layout.add_widget(open_stream_button)
+        layout.add_widget(close_stream_button)
         layout.add_widget(BackButton())
         self.add_widget(layout)
     
@@ -119,17 +155,35 @@ transcript = TranscriptScreen(name='transcript')
 obstacle_detection = CameraScreen(name='obstacle_detection')
 
 def listen_for_voice():
-    with sr.Microphone() as mic:
-        r.adjust_for_ambient_noise(mic, duration=1)
-        r.pause_threshold = 1
-        while True:
+    global stream
+    while True:
+        if transcribing:
             try:
-                audio = r.listen(mic, 10)
-                text = r.recognize_vosk(audio)
-                text = text.lower() #to ensure nothing interesting happens when comparing text
-                transcript.sub_layout.add_message(text)
-            except sr.WaitTimeoutError:
-                print("Nothing has been said for a while. Would you like to stop?")
+                stream = p.open(format=FORMAT,
+                channels=CHANNELS,
+                rate=RATE,
+                input=True,
+                frames_per_buffer=CHUNK)
+
+                frames = []
+
+                for i in range(0, int(RATE / CHUNK * RECORD_SECONDS)):
+                    data = stream.read(CHUNK)
+                    frames.append(data)
+
+                stream.stop_stream()
+                stream.close()
+
+                with wave.open(WAVE_OUTPUT_FILENAME, 'wb') as wf:
+                    wf.setnchannels(CHANNELS)
+                    wf.setsampwidth(p.get_sample_size(FORMAT))
+                    wf.setframerate(RATE)
+                    wf.writeframes(b''.join(frames))
+                segments, info = speech_model.transcribe('output.wav', beam_size=1, best_of=1) #beam size: the # of stored possibilities
+                for segment in segments:
+                    print(segment.text)
+                    transcript.sub_layout.add_message(segment.text)
+                time.sleep(0.01)
             except Exception as e:
                 print("Could not understand voice")
                 print(e)
@@ -137,10 +191,13 @@ def listen_for_voice():
 
 #camera = cv2.VideoCapture(0) #0 means to use the default camera
 def analyze_image():
+    global class_ids
+    global active_item
+    global vertical_index
     img_data = obstacle_detection.get_img_data()
     success, encoded_img = cv2.imencode('.jpg', img_data)
     decoded_img = cv2.imdecode(encoded_img, cv2.IMREAD_COLOR)
-    results = model(decoded_img)
+    results = obj_model(decoded_img)
     left_right_object_sort = []
     up_down_object_sort = []
     class_ids_horizontal = []
@@ -155,13 +212,29 @@ def analyze_image():
             j += 1
         i = 0
         for box in result.boxes:
-            item_dict_h = {'min_x': left_right_object_sort[i], 'name': model.names[int(box.cls[0])]}
-            item_dict_v = {'distance': up_down_object_sort[i], 'name': model.names[int(box.cls[0])]}
-            class_ids_horizontal.append(item_dict_h)
-            class_ids_vertical.append(item_dict_v)
+            item_dict = {'id': i, 'distance': up_down_object_sort[i], 'min_x': left_right_object_sort[i], 'name': obj_model.names[int(box.cls[0])]}
+            class_ids_horizontal.append(item_dict)
+            class_ids_vertical.append(item_dict)
             i += 1
         class_ids_horizontal = sorted(class_ids_horizontal, key = lambda item: item['min_x']) #Consider *-1 for mirrored cameras
-        class_ids_vertical = sorted(class_ids_vertical, key = lambda item: item['distance'] * -1)
+        class_ids_vertical = sorted(class_ids_vertical, key = lambda item: item['distance'])
+        tts_engine.say("Hello")
+        class_ids = []
+        vertical_index = 0
+        for item in class_ids_vertical:
+            active_item = item
+            print(vertical_index)
+            filter(distance_is_similar(), class_ids_vertical)
+            vertical_index += 1
+
+def distance_is_similar():
+    global class_ids
+    global vertical_index
+    global active_item
+    class_ids.insert(vertical_index, [active_item])
+    for item2 in class_ids_vertical:
+        if abs(active_item['distance'] - item2['distance']) > 10 and item2 != active_item:
+            class_ids[vertical_index].append(item2)
 
 
 def change_screen(name):
