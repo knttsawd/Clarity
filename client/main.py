@@ -76,7 +76,6 @@ class MainApp(App):
         return sm
     def on_request_close(self, **kwargs):
         App.get_running_app().stop()
-        print("Closing")
         stream.stop_stream()
         stream.close()
         p.terminate()
@@ -192,15 +191,13 @@ def listen_for_voice():
 #camera = cv2.VideoCapture(0) #0 means to use the default camera
 def analyze_image():
     global class_ids
-    global active_item
-    global vertical_index
+    global confident_class_ids_vertical
     img_data = obstacle_detection.get_img_data()
     success, encoded_img = cv2.imencode('.jpg', img_data)
     decoded_img = cv2.imdecode(encoded_img, cv2.IMREAD_COLOR)
     results = obj_model(decoded_img)
     left_right_object_sort = []
     up_down_object_sort = []
-    class_ids_horizontal = []
     class_ids_vertical = []
     for result in results:
         xy_box_coordinates = result.boxes.xyxy.cpu().numpy()
@@ -212,33 +209,55 @@ def analyze_image():
             j += 1
         i = 0
         for box in result.boxes:
-            item_dict = {'id': i, 'distance': up_down_object_sort[i], 'min_x': left_right_object_sort[i], 'name': obj_model.names[int(box.cls[0])]}
-            class_ids_horizontal.append(item_dict)
+            item_dict = {'id': i, 'distance': up_down_object_sort[i], 'min_x': left_right_object_sort[i], 'name': obj_model.names[int(box.cls[0])], 'conf': f"{box.conf[0]:.2f}"}
             class_ids_vertical.append(item_dict)
             i += 1
-        class_ids_horizontal = sorted(class_ids_horizontal, key = lambda item: item['min_x']) #Consider *-1 for mirrored cameras
-        class_ids_vertical = sorted(class_ids_vertical, key = lambda item: item['distance'])
-        tts_engine.say("Hello")
-        class_ids = []
-        vertical_index = 0
-        for item in class_ids_vertical:
-            active_item = item
-            print(vertical_index)
-            filter(distance_is_similar(), class_ids_vertical)
-            vertical_index += 1
+        confident_class_ids_vertical = [item for item in class_ids_vertical if confidence(item)]
+        class_ids = sort_distance(confident_class_ids_vertical)
+        tts_engine.say(organize_for_speech(class_ids))
+        tts_engine.runAndWait()
 
-def distance_is_similar():
-    global class_ids
-    global vertical_index
-    global active_item
-    class_ids.insert(vertical_index, [active_item])
-    for item2 in class_ids_vertical:
-        if abs(active_item['distance'] - item2['distance']) > 10 and item2 != active_item:
-            class_ids[vertical_index].append(item2)
+def confidence(item):
+    return float(item['conf']) > 0.65
+
+def organize_for_speech(array):
+    text = "In front of you there is a "
+    for item_list in array:
+        for item in item_list:
+            name = item['name']
+            future_index = item_list.index(item) + 1
+            if future_index < len(item_list):
+                future_item = item_list[future_index]
+            if item_list[-1] == item:
+                if(array[-1] == item_list):
+                    text += name + "."
+                else:
+                    text += name + ". "
+            elif future_item['name'] == name:
+                text += name + " next to another "
+            else:
+                text += name + " next to a "
+        if not array[-1] == item_list:
+            text += "Behind that is a "
+    return text
+
+def sort_distance(xy_list):
+    class_ids = []
+    used_list = []
+    for i in range(len(xy_list)):
+        if not xy_list[i] in used_list:
+            class_ids.insert(i, [])
+            temp_list = filter(lambda item: abs(xy_list[i]['distance'] - item['distance']) < 10, xy_list)
+            for item in temp_list:
+                class_ids[i].append(item)
+                used_list.append(item)
+    for i in range(len(class_ids)):
+        class_ids[i - 1] = sorted(class_ids[i - 1], key=lambda item: item['min_x'])
+    return class_ids
 
 
 def change_screen(name):
-     sm.current = name
+    sm.current = name
 
 if __name__ == "__main__":
     voice_thread = threading.Thread(target=listen_for_voice, args=(), daemon=True)
