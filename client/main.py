@@ -11,7 +11,7 @@ import threading
 #Making python speak
 import pyttsx3
 #offline quick speech recognition
-import vosk
+
 #Checks for paths
 import os
 #Images to arrays so we don't need to save peoples photos
